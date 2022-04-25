@@ -56,7 +56,6 @@ class BackupBotSwarm:
 
     def start(self):
         """Starts the bot swarm in the asyncio loop"""
-
         for b in self.bots:
             b = self.bots[b]
             self.loop.create_task(b.start(b.token))
@@ -109,7 +108,8 @@ class BackupBotMaster(BackupBot):
         self.target_channels = []
         self.console_channel = console_channel
 
-        self.bots = None  # list of backup bots
+        self.bots = {}          # index of backup bots (excluding master)
+        self.targets = {}       # index of users that are targeted
 
     async def on_ready(self):
         await super().on_ready()
@@ -123,6 +123,11 @@ class BackupBotMaster(BackupBot):
             if c is None:
                 await self.guild.create_text_channel(channel.name)
 
+        # generate index of target users
+        for i in self.bots:
+            member = self.target_guild.get_member(i)
+            self.targets.update({i: member})
+
     async def on_message(self, message):
         """Listener for messages from target channels and routes them to appropriate bots
 
@@ -131,14 +136,22 @@ class BackupBotMaster(BackupBot):
         """
         if message.author == self.user or message.channel.id not in self.target_channel_ids + [self.console_channel]:
             return
-        await self.bots.get(message.author.id, self).send_message(message.content, message.channel.name)
 
-        # TODO: console channel
+        if message.channel.id != self.console_channel:
+            await self.bots.get(message.author.id, self).send_message(message.content, message.channel.name)
+            return
+
+        """Console - execute commands to the bot swarm manually"""
+        if message.content == "sync profiles":
+            for b in self.bots:
+                member = self.targets[b]
+                avatar = member.default_avatar
+                username = member.nick
+                await self.bots[b].sync_profile(avatar=avatar, username=username)
 
     async def on_user_update(self, before: discord.User, after: discord.User):
-        """Listener for user guild profile updates and activate profile syncing of the targeted bot"""
+        """Listener for user avatar updates and activate avatar syncing of the targeted bot"""
         avatar = None
-        username = None
         user_id = after.id
 
         if user_id not in list(self.bots.keys()):
@@ -146,10 +159,21 @@ class BackupBotMaster(BackupBot):
 
         if before.avatar != after.avatar:
             avatar = after.avatar
-        if before.display_name != after.display_name:
-            username = after.display_name
 
-        await self.bots[user_id].sync_profile(avatar=avatar, username=username)
+        await self.bots[user_id].sync_profile(avatar=avatar)
+
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        """Listener for member nickname updates and activate username syncing of the targeted bot"""
+        nick = None
+        user_id = after.id
+
+        if user_id not in list(self.bots.keys()):
+            return
+
+        if before.nick != after.nick:
+            nick = after.nick
+
+        await self.bots[user_id].sync_profile(username=nick)
 
 
 if __name__ == "__main__":
