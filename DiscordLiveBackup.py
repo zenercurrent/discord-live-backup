@@ -10,16 +10,6 @@ Manual backup (with timestamp)
 Realtime backup
 """
 
-# TODO: (get working product ASAP)
-#   1. Manual Batch Backup
-#   2. Realtime Live Backup - listeners
-#   3. Server with backup-ped channels
-#   4. Format of message (webhook vs normal bot message)
-#   5. Message cache in case of edit/delete
-#   .
-#   Resources:
-#   https://github.com/Rapptz/discord.py/issues/516
-
 import asyncio
 import discord
 import json
@@ -37,7 +27,6 @@ class BackupBotSwarm:
 
     def __init__(self, master: str, target_guild_id: int, target_channel_ids: list, backup_guild_id: int, swarm=None):
         """
-
         :param master: the bot token of the master backup bot
         :param target_guild_id: id of the guild with channels that are targeted for backup
         :param target_channel_ids: list of channel ids for targeted for backup
@@ -58,7 +47,8 @@ class BackupBotSwarm:
         for key in self.__swarm:
             if key == "master":
                 continue
-            bot = BackupBot(key, self.__swarm[key], backup_guild_id)
+            key = int(key)
+            bot = BackupBot(key, self.__swarm[str(key)], backup_guild_id)
             self.bots.update({key: bot})
 
         self.master = BackupBotMaster(self.__swarm["master"], target_guild_id, target_channel_ids, backup_guild_id)
@@ -70,7 +60,9 @@ class BackupBotSwarm:
         for b in self.bots:
             b = self.bots[b]
             self.loop.create_task(b.start(b.token))
+            del b.token
         self.loop.create_task(self.master.start(self.master.token))
+        del self.master.token
 
         try:
             self.loop.run_forever()
@@ -82,7 +74,7 @@ class BackupBot(discord.Client):
 
     def __init__(self, target: int, token: str, backup_guild: int, **options):
         super().__init__(**options)
-        self.target = target  # -1 if no target
+        self.target_id = target  # -1 if no target
         self.token = token
 
         self.backup_guild_id = backup_guild
@@ -94,22 +86,30 @@ class BackupBot(discord.Client):
         self.channels = self.guild.text_channels
 
     async def send_message(self, message, channel_name):
+        """Sends a message to the specified channel"""
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
         await channel.send(message)
+
+    async def sync_profile(self, avatar=None, username=None):
+        """Syncs the bot's username and avatar with the target user"""
+        if avatar is not None:
+            await self.user.edit(avatar=avatar)
+        if username is not None:
+            await self.user.edit(username=username)
 
 
 class BackupBotMaster(BackupBot):
 
-    def __init__(self, token: str, target_guild: int, target_channels: list, backup_guild: int):
+    def __init__(self, token: str, target_guild: int, target_channels: list, backup_guild: int, console_channel=0):
         super().__init__(-1, token, backup_guild)
 
         self.target_guild_id = target_guild
         self.target_channel_ids = target_channels
-
         self.target_guild = None
         self.target_channels = []
+        self.console_channel = console_channel
 
-        self.bots = None  # list of backup bots (not including master)
+        self.bots = None  # list of backup bots
 
     async def on_ready(self):
         await super().on_ready()
@@ -124,12 +124,33 @@ class BackupBotMaster(BackupBot):
                 await self.guild.create_text_channel(channel.name)
 
     async def on_message(self, message):
-        if message.author == self.user or message.channel.id not in self.target_channel_ids:
+        """Listener for messages from target channels and routes them to appropriate bots
+
+            Also has a function to receive commands from a console channel. (if console_channel param is set)
+            This is used to manually run certain actions with the bot swarm.
+        """
+        if message.author == self.user or message.channel.id not in self.target_channel_ids + [self.console_channel]:
             return
         await self.bots.get(message.author.id, self).send_message(message.content, message.channel.name)
 
+        # TODO: console channel
+
+    async def on_user_update(self, before: discord.User, after: discord.User):
+        """Listener for user guild profile updates and activate profile syncing of the targeted bot"""
+        avatar = None
+        username = None
+        user_id = after.id
+
+        if user_id not in list(self.bots.keys()):
+            return
+
+        if before.avatar != after.avatar:
+            avatar = after.avatar
+        if before.display_name != after.display_name:
+            username = after.display_name
+
+        await self.bots[user_id].sync_profile(avatar=avatar, username=username)
+
 
 if __name__ == "__main__":
-    y = {278102709804990466: "OTY3OTE5NjExMTc5ODQ3Nzgy.YmXTYg.Srd72_YoKaNZMYPXZsyCBa1f6-k"}
-    x = BackupBotSwarm("OTY3OTIyNDcwODk0MDUxMzI4.YmXWDA.uXy6WG3_kzuaLpi8oPtWZKy3rbs", 696756360787787837,
-                       [765950803453411349], 968010319299481611, swarm=y)
+    master = os.environ["master"]
