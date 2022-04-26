@@ -84,10 +84,30 @@ class BackupBot(discord.Client):
         self.guild = self.get_guild(self.backup_guild_id)
         self.channels = self.guild.text_channels
 
-    async def send_message(self, message, channel_name):
-        """Sends a message to the specified channel"""
+    async def send_message(self, channel_name: str, message=None, embeds=None, files=None, stickers=None):
+        """Sends a message to the specified channel
+
+        Supported messages:
+        - normal string content
+        - embed(s)
+        - attachment(s)
+        - sticker(s)
+        """
+        if embeds is None:
+            embeds = []
+        if files is None:
+            files = []
+        if stickers is None:
+            stickers = []
+
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
-        await channel.send(message)
+        await channel.send(content=message,
+                           embed=embeds if 0 < len(embeds) < 2 else None,
+                           embeds=embeds if len(embeds) > 1 else None,
+                           file=files if 0 < len(files) < 2 else None,
+                           files=files if len(files) > 1 else None,
+                           stickers=stickers
+                           )
 
     async def sync_profile(self, avatar=None, username=None, nickname=None):
         """Syncs the bot's username and avatar with the target user"""
@@ -245,7 +265,7 @@ class BackupBotMaster(BackupBot):
 
     async def __send(self, message: discord.Message):
         """Determines message content and routes it to appropriate bot"""
-        await self.bots.get(message.author.id, self).send_message(message.content, message.channel.name)
+        await self.bots.get(message.author.id, self).send_message(message.channel_name, message.channel.name)
 
     async def _raise(self, message: str):
         """
