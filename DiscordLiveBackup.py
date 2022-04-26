@@ -102,7 +102,8 @@ class BackupBot(discord.Client):
 
 class BackupBotMaster(BackupBot):
 
-    def __init__(self, token: str, target_guild: int, target_channels: list, backup_guild: int, console_channel=968231979701137428):
+    def __init__(self, token: str, target_guild: int, target_channels: list, backup_guild: int,
+                 console_channel=968231979701137428):
         super().__init__(-1, token, backup_guild)
 
         self.target_guild_id = target_guild
@@ -112,8 +113,8 @@ class BackupBotMaster(BackupBot):
         self.console_channel_id = console_channel
         self.console = None
 
-        self.bots = {}          # index of backup bots (excluding master)
-        self.targets = {}       # index of users that are targeted
+        self.bots = {}  # index of backup bots (excluding master)
+        self.targets = {}  # index of users that are targeted
 
     async def on_ready(self):
         await super().on_ready()
@@ -143,7 +144,7 @@ class BackupBotMaster(BackupBot):
             return
 
         if message.channel.id != self.console_channel_id:
-            await self.bots.get(message.author.id, self).send_message(message.content, message.channel.name)
+            await self.__send(message)
             return
 
         """Console - execute commands to the bot swarm manually"""
@@ -162,6 +163,56 @@ class BackupBotMaster(BackupBot):
                 await self.bots[b].sync_profile(avatar=avatar, username=username, nickname=nickname)
 
             await self.console.send("Syncing complete.")
+
+        elif str(message.content).startswith("manual import "):
+            # Manual Import - manually import and routes the messages from the starting point to latest message
+            # (requires the message id of the message to start from as a parameter)
+
+            print("Command: manual import")
+            message_id = str(message.content).replace("manual import ", "", 1)
+            print("message_id ->", message_id)
+
+            if not message_id.isdigit():
+                await self._raise("message_id is not the right format")
+            message_id = int(message_id)
+
+            await message.reply("Starting manual import operation")
+            await self.console.send("Searching for target message with message id: " + str(message_id))
+
+            # find starting point message
+            found = False
+            starting_point = None
+            for c in self.target_channels:
+                try:
+                    starting_point = await c.fetch_message(message_id)
+                except discord.NotFound:
+                    continue
+                else:
+                    found = True
+                    break
+            if not found:
+                await self._raise("message was not found")
+                return
+            await self.console.send(
+                f"Message for starting point is found, with content: '{message.content}' from channel: `#{message.channel}`")
+            await self.console.send("Proceed with mass import? (yes to continue)")
+            confirm = None
+            try:
+                confirm = await self.wait_for("message", check=lambda m: m.channel == message.channel, timeout=60.0)
+            except asyncio.TimeoutError:
+                pass
+            if confirm.content != "yes":
+                await self.console.send("Cancelling manual import operation")
+                return
+
+            # start import
+            await self.console.send("Starting importing procedure...")
+            counter = 0
+            async for import_message in starting_point.channel.history(limit=None):
+                await self.__send(import_message)
+                counter += 1
+
+            await self.console.send("Importing successful. Total messages imported: " + str(counter))
 
     async def on_user_update(self, before: discord.User, after: discord.User):
         """Listener for user avatar and username updates and activate profile syncing of the targeted bot"""
@@ -191,3 +242,20 @@ class BackupBotMaster(BackupBot):
             nick = after.nick
 
         await self.bots[user_id].sync_profile(nickname=nick)
+
+    async def __send(self, message: discord.Message):
+        """Determines message content and routes it to appropriate bot"""
+        await self.bots.get(message.author.id, self).send_message(message.content, message.channel.name)
+
+    async def _raise(self, message: str):
+        """
+        :param message: message describing the error
+        """
+        await self.console.send(f"CommandException: {message}")
+        raise self.CommandException(message)
+
+    class CommandException(Exception):
+        """Raise for incorrect command parameters or command failures"""
+
+        def __init__(self, message: str):
+            print(f"CommandException: {message}")
