@@ -214,7 +214,7 @@ class BackupBotMaster(BackupBot):
                 await self._raise("message was not found")
                 return
             await self.console.send(
-                f"Message for starting point is found, with content: '{message.content}' from channel: `#{message.channel}`")
+                f"Message for starting point is found, with content: '{starting_point.content}' from channel: `#{starting_point.channel}`")
             await self.console.send("Proceed with mass import? (yes to continue)")
             confirm = None
             try:
@@ -265,7 +265,11 @@ class BackupBotMaster(BackupBot):
 
     async def __send(self, message: discord.Message):
         """Determines message content and routes it to appropriate bot"""
-        await self.bots.get(message.author.id, self).send_message(message.channel_name, message.channel.name)
+        await self.bots.get(message.author.id, self).send_message(message.channel,
+                                                                  message=message.content if message.content != "" else None,
+                                                                  embeds=message.embeds,
+                                                                  files=message.attachments,
+                                                                  stickers=message.stickers)
 
     async def _raise(self, message: str):
         """
