@@ -89,24 +89,28 @@ class BackupBot(discord.Client):
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
         await channel.send(message)
 
-    async def sync_profile(self, avatar=None, username=None):
+    async def sync_profile(self, avatar=None, username=None, nickname=None):
         """Syncs the bot's username and avatar with the target user"""
         if avatar is not None:
             await self.user.edit(avatar=avatar)
         if username is not None:
             await self.user.edit(username=username)
+        if nickname is not None:
+            me = self.guild.get_member(self.user.id)
+            await me.edit(nick=nickname)
 
 
 class BackupBotMaster(BackupBot):
 
-    def __init__(self, token: str, target_guild: int, target_channels: list, backup_guild: int, console_channel=0):
+    def __init__(self, token: str, target_guild: int, target_channels: list, backup_guild: int, console_channel=968231979701137428):
         super().__init__(-1, token, backup_guild)
 
         self.target_guild_id = target_guild
         self.target_channel_ids = target_channels
         self.target_guild = None
         self.target_channels = []
-        self.console_channel = console_channel
+        self.console_channel_id = console_channel
+        self.console = None
 
         self.bots = {}          # index of backup bots (excluding master)
         self.targets = {}       # index of users that are targeted
@@ -114,6 +118,7 @@ class BackupBotMaster(BackupBot):
     async def on_ready(self):
         await super().on_ready()
         self.target_guild = self.get_guild(self.target_guild_id)
+        self.console = self.guild.get_channel(self.console_channel_id)
         for i in self.target_channel_ids:
             channel = self.get_channel(i)
             self.target_channels.append(channel)
@@ -125,7 +130,7 @@ class BackupBotMaster(BackupBot):
 
         # generate index of target users
         for i in self.bots:
-            member = self.target_guild.get_member(i)
+            member = await self.target_guild.fetch_member(i)
             self.targets.update({i: member})
 
     async def on_message(self, message):
@@ -134,24 +139,34 @@ class BackupBotMaster(BackupBot):
             Also has a function to receive commands from a console channel. (if console_channel param is set)
             This is used to manually run certain actions with the bot swarm.
         """
-        if message.author == self.user or message.channel.id not in self.target_channel_ids + [self.console_channel]:
+        if message.author == self.user or message.channel.id not in self.target_channel_ids + [self.console_channel_id]:
             return
 
-        if message.channel.id != self.console_channel:
+        if message.channel.id != self.console_channel_id:
             await self.bots.get(message.author.id, self).send_message(message.content, message.channel.name)
             return
 
         """Console - execute commands to the bot swarm manually"""
+
         if message.content == "sync profiles":
+            # Sync Profiles - manually sync up the username, avatar and nickname of target to the bot
+
+            print("Command: sync profiles")
+            await message.reply("Syncing profile avatars and usernames...")
+
             for b in self.bots:
                 member = self.targets[b]
-                avatar = member.default_avatar
-                username = member.nick
-                await self.bots[b].sync_profile(avatar=avatar, username=username)
+                avatar = await member.avatar_url.read()
+                username = member.name
+                nickname = member.nick
+                await self.bots[b].sync_profile(avatar=avatar, username=username, nickname=nickname)
+
+            await self.console.send("Syncing complete.")
 
     async def on_user_update(self, before: discord.User, after: discord.User):
-        """Listener for user avatar updates and activate avatar syncing of the targeted bot"""
+        """Listener for user avatar and username updates and activate profile syncing of the targeted bot"""
         avatar = None
+        username = None
         user_id = after.id
 
         if user_id not in list(self.bots.keys()):
@@ -159,11 +174,13 @@ class BackupBotMaster(BackupBot):
 
         if before.avatar != after.avatar:
             avatar = after.avatar
+        if before.display_name != after.display_name:
+            username = after.display_name
 
-        await self.bots[user_id].sync_profile(avatar=avatar)
+        await self.bots[user_id].sync_profile(avatar=avatar, username=username)
 
     async def on_member_update(self, before: discord.Member, after: discord.Member):
-        """Listener for member nickname updates and activate username syncing of the targeted bot"""
+        """Listener for member nickname updates and activate nickname syncing of the targeted bot"""
         nick = None
         user_id = after.id
 
@@ -173,8 +190,4 @@ class BackupBotMaster(BackupBot):
         if before.nick != after.nick:
             nick = after.nick
 
-        await self.bots[user_id].sync_profile(username=nick)
-
-
-if __name__ == "__main__":
-    master = os.environ["master"]
+        await self.bots[user_id].sync_profile(nickname=nick)
