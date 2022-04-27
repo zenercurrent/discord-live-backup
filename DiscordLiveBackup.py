@@ -317,9 +317,9 @@ class BackupBotMaster(BackupBot):
         matches = re.findall("<@\d+>", content)
         for m in matches:
             user_id = int(m[2:-1])
-            bot_mention = self.bots.get(user_id, None).user.mention
-            if bot_mention is not None:
-                content = content.replace(m, bot_mention, 1)
+            bot = self.bots.get(user_id, None)
+            if bot is not None:
+                content = content.replace(m, bot.user.mention, 1)
 
         await self.bots.get(message.author.id, self).send_message(channel_name=message.channel.name,
                                                                   message=content,
