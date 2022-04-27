@@ -84,7 +84,7 @@ class BackupBot(discord.Client):
         self.guild = self.get_guild(self.backup_guild_id)
         self.channels = self.guild.text_channels
 
-    async def send_message(self, channel_name: str, message=None, embeds=None, files=None, stickers=None):
+    async def send_message(self, channel_name: str, message="", embeds=None, files=None, stickers=None):
         """Sends a message to the specified channel
 
         Supported messages:
@@ -100,15 +100,16 @@ class BackupBot(discord.Client):
         if stickers is None:    # no more sticker support?
             stickers = []
 
-        if message is None:
-            message = "None"
-
-        # no multiple embeds/files?
         # TODO: fix/investigate issues, link embeds, change user tag to bot tag, bot sync colors
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
+
+        # convert attachments -> files
+        files = [await attach.to_file() for attach in files]
+
         await channel.send(content=message,
                            embed=embeds[0] if len(embeds) > 0 else None,
-                           file=files[0] if len(files) < 0 else None    # files vs attachments
+                           file=files[0] if len(files) == 1 else None,
+                           files=files if len(files) > 1 else None
                            )
 
     async def sync_profile(self, avatar=None, username=None, nickname=None):
@@ -217,7 +218,6 @@ class BackupBotMaster(BackupBot):
             await self.console.send("Searching for target message with message id: " + message_id)
 
             # find starting point message
-            starting_point = None
             try:
                 starting_point = await self.__get(message_id)
             except self.CommandException:
@@ -238,7 +238,7 @@ class BackupBotMaster(BackupBot):
             # start import
             await self.console.send("Starting importing procedure...")
             counter = 0
-            async for import_message in starting_point.channel.history(limit=None, oldest_first=True):
+            async for import_message in starting_point.channel.history(limit=None, oldest_first=True, after=starting_point):
                 await self.__send(import_message)
                 counter += 1
 
