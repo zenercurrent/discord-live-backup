@@ -110,7 +110,7 @@ class BackupBot(discord.Client):
         files = [await attach.to_file() for attach in files]
 
         # prevent overwriting link embeds
-        if "http://www" in message or "https://www" in message:
+        if "http://" in message or "https://" in message:
             embeds = []
 
         await channel.send(content=message,
