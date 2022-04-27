@@ -14,6 +14,7 @@ import asyncio
 import discord
 import json
 import os
+import re
 
 
 class BackupBotSwarm:
@@ -100,7 +101,9 @@ class BackupBot(discord.Client):
         if stickers is None:    # no more sticker support?
             stickers = []
 
-        # TODO: fix/investigate issues, change user tag to bot tag, role/colour copy
+        # TODO: fix/investigate issues, change user tag to bot tag, role/colour copy, reactions
+        #       default bot metadata, manual import metadata, stats logging; live edit/delete w cache?
+        #       downtime offset calc
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
 
         # convert attachments -> files
@@ -303,9 +306,23 @@ class BackupBotMaster(BackupBot):
         return message
 
     async def __send(self, message: discord.Message):
-        """Determines message content and routes it to appropriate bot"""
+        """Determines message content and routes it to appropriate bot
+        Also changes user mentions to the corresponding bot user mention
+
+        :param message: Message object for bot to send
+        """
+
+        # change user mentions to bot user mention
+        content = message.content
+        matches = re.findall("<@\d+>", content)
+        for m in matches:
+            user_id = int(m[2:-1])
+            bot_mention = self.bots.get(user_id, None).user.mention
+            if bot_mention is not None:
+                content = content.replace(m, bot_mention, 1)
+
         await self.bots.get(message.author.id, self).send_message(channel_name=message.channel.name,
-                                                                  message=message.content if message.content != "" else None,
+                                                                  message=content,
                                                                   embeds=message.embeds,
                                                                   files=message.attachments,
                                                                   stickers=message.stickers)
