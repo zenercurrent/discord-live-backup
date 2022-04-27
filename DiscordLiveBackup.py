@@ -97,16 +97,18 @@ class BackupBot(discord.Client):
             embeds = []
         if files is None:
             files = []
-        if stickers is None:
+        if stickers is None:    # no more sticker support?
             stickers = []
 
+        if message is None:
+            message = "None"
+
+        # no multiple embeds/files?
+        # TODO: fix/investigate issues, link embeds, change user tag to bot tag, bot sync colors
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
         await channel.send(content=message,
-                           embed=embeds if 0 < len(embeds) < 2 else None,
-                           embeds=embeds if len(embeds) > 1 else None,
-                           file=files if 0 < len(files) < 2 else None,
-                           files=files if len(files) > 1 else None,
-                           stickers=stickers
+                           embed=embeds[0] if len(embeds) > 0 else None,
+                           file=files[0] if len(files) < 0 else None    # files vs attachments
                            )
 
     async def sync_profile(self, avatar=None, username=None, nickname=None):
@@ -135,6 +137,8 @@ class BackupBotMaster(BackupBot):
 
         self.bots = {}  # index of backup bots (excluding master)
         self.targets = {}  # index of users that are targeted
+
+        self.__debug_pt = None  # for dev debug
 
     async def on_ready(self):
         await super().on_ready()
@@ -184,6 +188,23 @@ class BackupBotMaster(BackupBot):
 
             await self.console.send("Syncing complete.")
 
+        elif str(message.content).startswith("get message "):
+            # Get Message - helper to get message info based on valid message_id
+
+            print("Command: get message")
+            message_id = str(message.content).replace("get message ", "", 1)
+            print("message_id ->", message_id)
+
+            message = None
+            try:
+                message = await self.__get(message_id)
+            except self.CommandException:
+                return
+
+            print(message)
+            self.__debug_pt = message
+            await self.console.send(f"{message}\nembeds: {message.embeds}\nattachments: {message.attachments}")
+
         elif str(message.content).startswith("manual import "):
             # Manual Import - manually import and routes the messages from the starting point to latest message
             # (requires the message id of the message to start from as a parameter)
@@ -192,27 +213,16 @@ class BackupBotMaster(BackupBot):
             message_id = str(message.content).replace("manual import ", "", 1)
             print("message_id ->", message_id)
 
-            if not message_id.isdigit():
-                await self._raise("message_id is not the right format")
-            message_id = int(message_id)
-
             await message.reply("Starting manual import operation")
-            await self.console.send("Searching for target message with message id: " + str(message_id))
+            await self.console.send("Searching for target message with message id: " + message_id)
 
             # find starting point message
-            found = False
             starting_point = None
-            for c in self.target_channels:
-                try:
-                    starting_point = await c.fetch_message(message_id)
-                except discord.NotFound:
-                    continue
-                else:
-                    found = True
-                    break
-            if not found:
-                await self._raise("message was not found")
+            try:
+                starting_point = await self.__get(message_id)
+            except self.CommandException:
                 return
+
             await self.console.send(
                 f"Message for starting point is found, with content: '{starting_point.content}' from channel: `#{starting_point.channel}`")
             await self.console.send("Proceed with mass import? (yes to continue)")
@@ -220,7 +230,7 @@ class BackupBotMaster(BackupBot):
             try:
                 confirm = await self.wait_for("message", check=lambda m: m.channel == message.channel, timeout=60.0)
             except asyncio.TimeoutError:
-                pass
+                await self.console.send("Cancelling manual import operation")
             if confirm.content != "yes":
                 await self.console.send("Cancelling manual import operation")
                 return
@@ -228,7 +238,7 @@ class BackupBotMaster(BackupBot):
             # start import
             await self.console.send("Starting importing procedure...")
             counter = 0
-            async for import_message in starting_point.channel.history(limit=None):
+            async for import_message in starting_point.channel.history(limit=None, oldest_first=True):
                 await self.__send(import_message)
                 counter += 1
 
@@ -263,9 +273,34 @@ class BackupBotMaster(BackupBot):
 
         await self.bots[user_id].sync_profile(nickname=nick)
 
+    async def __get(self, message_id: str):
+        """Get the Message object based on message id, throws exception if not found"
+
+        :return message: the queried Message object
+        """
+        if not message_id.isdigit():
+            await self._raise("message_id is not the right format")
+        message_id = int(message_id)
+
+        message = None
+        found = False
+        for c in self.target_channels:
+            try:
+                message = await c.fetch_message(message_id)
+            except discord.NotFound:
+                continue
+            else:
+                found = True
+                break
+        if not found:
+            await self._raise("message was not found")
+            return None
+
+        return message
+
     async def __send(self, message: discord.Message):
         """Determines message content and routes it to appropriate bot"""
-        await self.bots.get(message.author.id, self).send_message(message.channel,
+        await self.bots.get(message.author.id, self).send_message(channel_name=message.channel.name,
                                                                   message=message.content if message.content != "" else None,
                                                                   embeds=message.embeds,
                                                                   files=message.attachments,
