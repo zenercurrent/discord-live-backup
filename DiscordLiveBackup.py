@@ -100,11 +100,15 @@ class BackupBot(discord.Client):
         if stickers is None:    # no more sticker support?
             stickers = []
 
-        # TODO: fix/investigate issues, link embeds, change user tag to bot tag, bot sync colors
+        # TODO: fix/investigate issues, change user tag to bot tag, role/colour copy
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
 
         # convert attachments -> files
         files = [await attach.to_file() for attach in files]
+
+        # prevent overwriting link embeds
+        if "http://www" in message or "https://www" in message:
+            embeds = []
 
         await channel.send(content=message,
                            embed=embeds[0] if len(embeds) > 0 else None,
