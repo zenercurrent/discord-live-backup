@@ -92,16 +92,17 @@ class BackupBot(discord.Client):
         - normal string content
         - embed(s)
         - attachment(s)
+        - reactions
         - sticker(s)
         """
         if embeds is None:
             embeds = []
         if files is None:
             files = []
-        if stickers is None:    # no more sticker support?
+        if stickers is None:  # no more sticker support?
             stickers = []
 
-        # TODO: fix/investigate issues, change user tag to bot tag, role/colour copy, reactions
+        # TODO: fix/investigate issues, reactions, role/colour copy
         #       default bot metadata, manual import metadata, stats logging; live edit/delete w cache?
         #       downtime offset calc
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
@@ -113,11 +114,26 @@ class BackupBot(discord.Client):
         if "http://" in message or "https://" in message:
             embeds = []
 
-        await channel.send(content=message,
-                           embed=embeds[0] if len(embeds) > 0 else None,
-                           file=files[0] if len(files) == 1 else None,
-                           files=files if len(files) > 1 else None
-                           )
+        msg = await channel.send(content=message,
+                                 embed=embeds[0] if len(embeds) > 0 else None,
+                                 file=files[0] if len(files) == 1 else None,
+                                 files=files if len(files) > 1 else None
+                                 )
+        return msg
+
+    async def add_reaction(self, channel_name: str, emoji: discord.Emoji, message_id=None):
+        """Adds a reaction to the Discord message under the bot user
+
+        if message_id not provided, will get most recent message
+        """
+        channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
+
+        if message_id is None:
+            message = channel.last_message
+        else:
+            message = await channel.fetch_message(message_id)
+
+        await message.add_reaction(emoji)
 
     async def sync_profile(self, avatar=None, username=None, nickname=None):
         """Syncs the bot's username and avatar with the target user"""
@@ -245,7 +261,8 @@ class BackupBotMaster(BackupBot):
             # start import
             await self.console.send("Starting importing procedure...")
             counter = 0
-            async for import_message in starting_point.channel.history(limit=None, oldest_first=True, after=starting_point):
+            async for import_message in starting_point.channel.history(limit=None, oldest_first=True,
+                                                                       after=starting_point):
                 await self.__send(import_message)
                 counter += 1
 
@@ -307,7 +324,10 @@ class BackupBotMaster(BackupBot):
 
     async def __send(self, message: discord.Message):
         """Determines message content and routes it to appropriate bot
-        Also changes user mentions to the corresponding bot user mention
+
+        Also does a few things as master:
+        - changes user mentions to the corresponding bot user mention
+        - clones the reactions with correct routing
 
         :param message: Message object for bot to send
         """
@@ -321,11 +341,19 @@ class BackupBotMaster(BackupBot):
             if bot is not None:
                 content = content.replace(m, bot.user.mention, 1)
 
-        await self.bots.get(message.author.id, self).send_message(channel_name=message.channel.name,
-                                                                  message=content,
-                                                                  embeds=message.embeds,
-                                                                  files=message.attachments,
-                                                                  stickers=message.stickers)
+        backup_message = await self.bots.get(message.author.id, self).send_message(channel_name=message.channel.name,
+                                                                                   message=content,
+                                                                                   embeds=message.embeds,
+                                                                                   files=message.attachments,
+                                                                                   stickers=message.stickers)
+
+        # import and clone reactions
+        reactions = message.reactions
+        for r in reactions:
+            async for r_user in r.users():
+                bot = self.bots.get(r_user.id, self)
+                await bot.add_reaction(message.channel.name, r.emoji)
+        # TODO: fix unknown emoji - create default unknown emoji
 
     async def _raise(self, message: str):
         """
