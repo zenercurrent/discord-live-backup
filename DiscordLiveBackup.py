@@ -102,7 +102,7 @@ class BackupBot(discord.Client):
         if stickers is None:  # no more sticker support?
             stickers = []
 
-        # TODO: fix/investigate issues, reactions, role/colour copy
+        # TODO: fix/investigate issues, reactions listener, role/colour copy
         #       default bot/reaction metadata, manual import metadata, stats logging; live edit/delete w cache?
         #       downtime offset calc
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
@@ -231,6 +231,27 @@ class BackupBotMaster(BackupBot):
 
             await self.console.send("Syncing complete.")
 
+        elif message.content == "sync roles":
+            # Sync Roles - manually sync up roles/colours from target guild to backup guild
+            # (roles will not be given to bots, just used for tagging)
+
+            print("Command: sync roles")
+            await message.reply("Syncing roles...")
+
+            # create role if doesn't exist
+            roles = self.target_guild.roles
+            backup_role_names = [_r.name for _r in self.guild.roles]
+            for role in roles:
+                if role.name not in backup_role_names:
+                    await self.guild.create_role(
+                        name=role.name,
+                        colour=role.colour,
+                        mentionable=True,
+                        reason="Auto role syncing"
+                    )
+
+            await self.console.send("Syncing complete.")
+
         elif str(message.content).startswith("get message "):
             # Get Message - helper to get message info based on valid message_id
 
@@ -246,7 +267,7 @@ class BackupBotMaster(BackupBot):
 
             print(message)
             self.__debug_pt = message
-            await self.console.send(f"{message}\nembeds: {message.embeds}\nattachments: {message.attachments}")
+            await self.console.send(f"{message}\ncontent: {message.content}\nembeds: {message.embeds}\nattachments: {message.attachments}")
 
         elif str(message.content).startswith("manual import "):
             # Manual Import - manually import and routes the messages from the starting point to latest message
