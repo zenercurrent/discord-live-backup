@@ -102,7 +102,7 @@ class BackupBot(discord.Client):
         if stickers is None:  # no more sticker support?
             stickers = []
 
-        # TODO: fix/investigate issues, reactions listener, role/colour copy
+        # TODO: channel tagging, emojis, reactions listener, role/colour change listener
         #       default bot/reaction metadata, manual import metadata, stats logging; live edit/delete w cache?
         #       downtime offset calc
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
@@ -149,7 +149,7 @@ class BackupBot(discord.Client):
             await self.user.edit(avatar=avatar)
 
         if username is not None:
-            await self.user.edit(username=username)
+            await self.user.edit(username=username + "_bot")
 
         if nickname is not None:
             me = self.guild.get_member(self.user.id)
@@ -411,6 +411,9 @@ class BackupBotMaster(BackupBot):
             role = self.roles.get(target_role.name, None)
             if role is not None:
                 content = content.replace(m, role.mention, 1)
+
+        # neuter @here and @everyone tags (to prevent spam)
+        content = content.replace("@here", "@/here").replace("@everyone", "@/everyone")
 
         backup_message = await self.bots.get(message.author.id, self).send_message(channel_name=message.channel.name,
                                                                                    message=content,
