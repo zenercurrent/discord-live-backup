@@ -160,8 +160,9 @@ class BackupBotMaster(BackupBot):
         self.console_channel_id = console_channel
         self.console = None
 
-        self.bots = {}  # index of backup bots (excluding master)
-        self.targets = {}  # index of users that are targeted
+        self.bots = {}      # index of backup bots (excluding master)
+        self.targets = {}   # index of users that are targeted
+        self.roles = {}     # index of roles in backup channel based on their names
 
         self.unknown_emoji = None
 
@@ -184,6 +185,10 @@ class BackupBotMaster(BackupBot):
         for i in self.bots:
             member = await self.target_guild.fetch_member(i)
             self.targets.update({i: member})
+
+        # generate index of roles
+        for r in self.guild.roles:
+            self.roles.update({r.name: r})
 
         # "unknown" default emoji for importing custom emoji
         _emojis = await self.guild.fetch_emojis()
@@ -371,15 +376,24 @@ class BackupBotMaster(BackupBot):
 
         :param message: Message object for bot to send
         """
-
-        # change user mentions to bot user mention
         content = message.content
+
+        # convert user mentions to bot user mention
         matches = re.findall("<@\d+>", content)
         for m in matches:
             user_id = int(m[2:-1])
             bot = self.bots.get(user_id, None)
             if bot is not None:
                 content = content.replace(m, bot.user.mention, 1)
+
+        # convert role mentions to backup guild role mention
+        matches = re.findall("<@&\d+>", content)
+        for m in matches:
+            role_id = int(m[3:-1])
+            target_role = self.target_guild.get_role(role_id)
+            role = self.roles.get(target_role.name, None)
+            if role is not None:
+                content = content.replace(m, role.mention, 1)
 
         backup_message = await self.bots.get(message.author.id, self).send_message(channel_name=message.channel.name,
                                                                                    message=content,
