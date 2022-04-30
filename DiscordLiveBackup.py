@@ -103,7 +103,7 @@ class BackupBot(discord.Client):
             stickers = []
 
         # TODO: fix/investigate issues, reactions, role/colour copy
-        #       default bot metadata, manual import metadata, stats logging; live edit/delete w cache?
+        #       default bot/reaction metadata, manual import metadata, stats logging; live edit/delete w cache?
         #       downtime offset calc
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
 
@@ -128,6 +128,7 @@ class BackupBot(discord.Client):
         """
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
 
+        assert message_id is int or message_id is None
         if message_id is None:
             message = channel.last_message
         else:
@@ -162,6 +163,8 @@ class BackupBotMaster(BackupBot):
         self.bots = {}  # index of backup bots (excluding master)
         self.targets = {}  # index of users that are targeted
 
+        self.unknown_emoji = None
+
         self.__debug_pt = None  # for dev debug
 
     async def on_ready(self):
@@ -181,6 +184,22 @@ class BackupBotMaster(BackupBot):
         for i in self.bots:
             member = await self.target_guild.fetch_member(i)
             self.targets.update({i: member})
+
+        # "unknown" default emoji for importing custom emoji
+        _emojis = await self.guild.fetch_emojis()
+        unknown_emoji = discord.utils.find(lambda e: e.name == "unknown_emoji", _emojis)
+        if unknown_emoji is None:
+            path = os.path.dirname(os.path.abspath(__file__)) + "\\unknown_emoji.png"
+            file = open(path, "rb")
+            data = file.read()
+            file.close()
+
+            unknown_emoji = await self.guild.create_custom_emoji(name="unknown_emoji",
+                                                                 image=data,
+                                                                 roles=[],
+                                                                 reason="\"unknown\" default emoji for importing "
+                                                                        "custom emojis")
+        self.unknown_emoji = unknown_emoji
 
     async def on_message(self, message):
         """Listener for messages from target channels and routes them to appropriate bots
@@ -352,8 +371,10 @@ class BackupBotMaster(BackupBot):
         for r in reactions:
             async for r_user in r.users():
                 bot = self.bots.get(r_user.id, self)
-                await bot.add_reaction(message.channel.name, r.emoji)
-        # TODO: fix unknown emoji - create default unknown emoji
+                try:
+                    await bot.add_reaction(message.channel.name, r.emoji)
+                except (discord.HTTPException, discord.NotFound):
+                    await bot.add_reaction(message.channel.name, self.unknown_emoji)
 
     async def _raise(self, message: str):
         """
