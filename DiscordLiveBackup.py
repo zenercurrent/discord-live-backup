@@ -136,15 +136,27 @@ class BackupBot(discord.Client):
 
         await message.add_reaction(emoji)
 
-    async def sync_profile(self, avatar=None, username=None, nickname=None):
-        """Syncs the bot's username and avatar with the target user"""
+    async def sync_profile(self, avatar=None, username=None, nickname=None, colour=None):
+        """Syncs the bot's profile with the target user
+
+        Sync-able parameters include:
+        - avatar
+        - username (excluding discriminator)
+        - nickname
+        - colour (based on role)
+        """
         if avatar is not None:
             await self.user.edit(avatar=avatar)
+
         if username is not None:
             await self.user.edit(username=username)
+
         if nickname is not None:
             me = self.guild.get_member(self.user.id)
             await me.edit(nick=nickname)
+
+        if colour is not None:
+            await self.guild.self_role.edit(colour=colour)
 
 
 class BackupBotMaster(BackupBot):
@@ -254,6 +266,11 @@ class BackupBotMaster(BackupBot):
                         mentionable=True,
                         reason="Auto role syncing"
                     )
+
+            # sync target user colours
+            for b in self.bots:
+                colour = self.targets[b].colour
+                await self.bots[b].sync_profile(colour=colour)
 
             await self.console.send("Syncing complete.")
 
