@@ -16,6 +16,8 @@ import json
 import os
 import re
 
+from datetime import timedelta
+
 
 class BackupBotSwarm:
     """Swarm of Backup Bots with a master controller
@@ -177,6 +179,7 @@ class BackupBotMaster(BackupBot):
         self.roles = {}     # index of roles in backup channel based on their names
 
         self.unknown_emoji = None
+        self.time_offset = 0    # can change this based on desired timezone offset (UTC)
 
         self.__debug_pt = None  # for dev debug
 
@@ -228,7 +231,7 @@ class BackupBotMaster(BackupBot):
             return
 
         if message.channel.id != self.console_channel_id:
-            await self.__send(message)
+            await self.__send(message, realtime=True)
             return
 
         """Console - execute commands to the bot swarm manually"""
@@ -384,7 +387,7 @@ class BackupBotMaster(BackupBot):
 
         return message
 
-    async def __send(self, message: discord.Message):
+    async def __send(self, message: discord.Message, realtime=False):
         """Determines message content and routes it to appropriate bot
 
         Also does a few things as master:
@@ -392,6 +395,7 @@ class BackupBotMaster(BackupBot):
         - clones the reactions with correct routing
 
         :param message: Message object for bot to send
+        :param realtime: flag to set True if message is from on_message
         """
         content = message.content
 
@@ -414,6 +418,13 @@ class BackupBotMaster(BackupBot):
 
         # neuter @here and @everyone tags (to prevent spam)
         content = content.replace("@here", "@/here").replace("@everyone", "@/everyone")
+
+        content = "\n" + content
+
+        # add message metadata if imported
+        if not realtime:
+            dt = "*[" + (message.created_at + timedelta(hours=self.time_offset)).strftime("%m/%d/%Y %I:%M%p") + "]*\n"
+            content = dt + content
 
         backup_message = await self.bots.get(message.author.id, self).send_message(channel_name=message.channel.name,
                                                                                    message=content,
