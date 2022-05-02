@@ -448,7 +448,7 @@ class BackupBotMaster(BackupBot):
                     await bot.add_reaction(message.channel.name, self.unknown_emoji)
                     unknown_reactions.update({r.emoji.name: unknown_reactions.get(r.emoji.name, []) + [bot.user.mention]})
 
-        r_metadata = "\n\n*Unknown Reactions:*"
+        r_metadata = "\n\n*Unknown Reactions:*" if (len(unknown_reactions) > 0 or len(unknown_reactors) > 0) else ""
         for u_emoji in unknown_reactions:
             u_reactors_count = unknown_reactions[u_emoji].count(self.user.mention)
             known_reactors = list(filter(lambda _u: _u != self.user.mention, unknown_reactions[u_emoji]))
