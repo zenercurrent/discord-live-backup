@@ -434,18 +434,37 @@ class BackupBotMaster(BackupBot):
 
         # import and clone reactions
         reactions = message.reactions
+        unknown_reactions = {}
+        unknown_reactors = {}
         for r in reactions:
             async for r_user in r.users():
                 bot = self.bots.get(r_user.id, self)
                 try:
                     await bot.add_reaction(message.channel.name, r.emoji)
+                    if bot.user.name == self.user.name:
+                        unknown_reactors.update({r.emoji.name: unknown_reactors.get(r.emoji.name, 0) + 1})
+
                 except (discord.HTTPException, discord.NotFound):
                     await bot.add_reaction(message.channel.name, self.unknown_emoji)
+                    unknown_reactions.update({r.emoji.name: unknown_reactions.get(r.emoji.name, []) + [bot.user.mention]})
+
+        r_metadata = "\n\n*Unknown Reactions:*"
+        for u_emoji in unknown_reactions:
+            u_reactors_count = unknown_reactions[u_emoji].count(self.user.mention)
+            known_reactors = list(filter(lambda _u: _u != self.user.mention, unknown_reactions[u_emoji]))
+            r_metadata += f"\n*[:{u_emoji}: -> {', '.join(known_reactors)} " \
+                          f"{'+' if (len(known_reactors) > 0 and u_reactors_count > 0) else ''} " \
+                          f"{(str(u_reactors_count) + ' unknown users') if u_reactors_count > 0 else ''}]*"
+        for u_emoji in unknown_reactors:
+            r_metadata += f"\n*[:{u_emoji}: -> +{unknown_reactors[u_emoji]} unknown users]*"
+
+        await backup_message.edit(content=backup_message.content + r_metadata)
 
     async def _raise(self, message: str):
         """
         :param message: message describing the error
         """
+        # TODO: client.on_error listener may be better?
         await self.console.send(f"CommandException: {message}")
         raise self.CommandException(message)
 
