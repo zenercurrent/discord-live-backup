@@ -458,7 +458,8 @@ class BackupBotMaster(BackupBot):
         for u_emoji in unknown_reactors:
             r_metadata += f"\n*[:{u_emoji}: -> +{unknown_reactors[u_emoji]} unknown users]*"
 
-        await backup_message.edit(content=backup_message.content + r_metadata)
+        if r_metadata != "":
+            await backup_message.edit(content=backup_message.content + r_metadata)
 
     async def _raise(self, message: str):
         """
