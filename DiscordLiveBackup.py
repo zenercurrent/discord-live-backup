@@ -104,8 +104,8 @@ class BackupBot(discord.Client):
         if stickers is None:  # no more sticker support?
             stickers = []
 
-        # TODO: channel tagging, emojis, reactions listener, role/colour change listener
-        #       default bot/reaction metadata, manual import metadata, stats logging; live edit/delete w cache?
+        # TODO: bot master reactions?, reactions listener, role/colour change listener, pins?
+        #       default bot metadata, stats logging; live edit/delete w cache?
         #       downtime offset calc
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
 
@@ -174,12 +174,12 @@ class BackupBotMaster(BackupBot):
         self.console_channel_id = console_channel
         self.console = None
 
-        self.bots = {}      # index of backup bots (excluding master)
-        self.targets = {}   # index of users that are targeted
-        self.roles = {}     # index of roles in backup channel based on their names
+        self.bots = {}  # index of backup bots (excluding master)
+        self.targets = {}  # index of users that are targeted
+        self.roles = {}  # index of roles in backup channel based on their names
 
         self.unknown_emoji = None
-        self.time_offset = 0    # can change this based on desired timezone offset (UTC)
+        self.time_offset = 0  # can change this based on desired timezone offset (UTC)
 
         self.__debug_pt = None  # for dev debug
 
@@ -292,7 +292,8 @@ class BackupBotMaster(BackupBot):
 
             print(message)
             self.__debug_pt = message
-            await self.console.send(f"{message}\ncontent: {message.content}\nembeds: {message.embeds}\nattachments: {message.attachments}")
+            await self.console.send(
+                f"{message}\ncontent: {message.content}\nembeds: {message.embeds}\nattachments: {message.attachments}")
 
         elif str(message.content).startswith("manual import "):
             # Manual Import - manually import and routes the messages from the starting point to latest message
@@ -426,37 +427,61 @@ class BackupBotMaster(BackupBot):
             dt = "*[" + (message.created_at + timedelta(hours=self.time_offset)).strftime("%m/%d/%Y %I:%M%p") + "]*\n"
             content = dt + content
 
-        backup_message = await self.bots.get(message.author.id, self).send_message(channel_name=message.channel.name,
-                                                                                   message=content,
-                                                                                   embeds=message.embeds,
-                                                                                   files=message.attachments,
-                                                                                   stickers=message.stickers)
+        bot = self.bots.get(message.author.id, self)
+
+        # add original author metadata if default backup bot
+        if bot.user.id == self.user.id:
+            content = content + f"*[Message Author: @/{message.author.name}#{message.author.discriminator}]*\n"
+
+        backup_message = await bot.send_message(channel_name=message.channel.name,
+                                                message=content,
+                                                embeds=message.embeds,
+                                                files=message.attachments,
+                                                stickers=message.stickers)
 
         # import and clone reactions
         reactions = message.reactions
         unknown_reactions = {}
         unknown_reactors = {}
+
         for r in reactions:
+            BOT_REACTED = False
+            REACTED_UNKNOWN = []  # to prevent un-needed reacting
+
             async for r_user in r.users():
                 bot = self.bots.get(r_user.id, self)
+                r_emoji = r.emoji
+                if r_emoji is discord.Emoji or r_emoji is discord.PartialEmoji:
+                    r_emoji = r_emoji.name
                 try:
-                    await bot.add_reaction(message.channel.name, r.emoji)
                     if bot.user.name == self.user.name:
-                        unknown_reactors.update({r.emoji.name: unknown_reactors.get(r.emoji.name, 0) + 1})
+                        unknown_reactors.update({r_emoji: unknown_reactors.get(r_emoji, 0) + 1})
+                        if BOT_REACTED:
+                            continue
+                        else:
+                            BOT_REACTED = True
+
+                    await bot.add_reaction(message.channel.name, r.emoji)
 
                 except (discord.HTTPException, discord.NotFound):
-                    await bot.add_reaction(message.channel.name, self.unknown_emoji)
-                    unknown_reactions.update({r.emoji.name: unknown_reactions.get(r.emoji.name, []) + [bot.user.mention]})
+                    if bot.user.id in REACTED_UNKNOWN:
+                        continue
 
-        r_metadata = "\n\n*Unknown Reactions:*" if (len(unknown_reactions) > 0 or len(unknown_reactors) > 0) else ""
+                    REACTED_UNKNOWN.append(bot.user.id)
+
+                    await bot.add_reaction(message.channel.name, self.unknown_emoji)
+                    unknown_reactions.update(
+                        {r_emoji: unknown_reactions.get(r_emoji, []) + [bot.user.mention]})
+
+        r_metadata = "\n\n*__Unknown Reactions:__*" if (len(unknown_reactions) > 0 or len(unknown_reactors) > 0) else ""
         for u_emoji in unknown_reactions:
             u_reactors_count = unknown_reactions[u_emoji].count(self.user.mention)
             known_reactors = list(filter(lambda _u: _u != self.user.mention, unknown_reactions[u_emoji]))
-            r_metadata += f"\n*[:{u_emoji}: -> {', '.join(known_reactors)} " \
+            r_metadata += f"\n*[{u_emoji} -> {', '.join(known_reactors)} " \
                           f"{'+' if (len(known_reactors) > 0 and u_reactors_count > 0) else ''} " \
-                          f"{(str(u_reactors_count) + ' unknown users') if u_reactors_count > 0 else ''}]*"
+                          f"{(str(u_reactors_count) + ' unknown user(s)') if u_reactors_count > 0 else ''}]*"
         for u_emoji in unknown_reactors:
-            r_metadata += f"\n*[:{u_emoji}: -> +{unknown_reactors[u_emoji]} unknown users]*"
+            r_metadata += f"\n*[{u_emoji} -> +{unknown_reactors[u_emoji]} unknown user(s)]*"
 
         if r_metadata != "":
             await backup_message.edit(content=backup_message.content + r_metadata)
