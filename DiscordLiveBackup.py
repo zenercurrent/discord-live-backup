@@ -221,6 +221,7 @@ class BackupBotMaster(BackupBot):
                                                                         "custom emojis")
         self.unknown_emoji = unknown_emoji
 
+    # on_message event listener
     async def on_message(self, message):
         """Listener for messages from target channels and routes them to appropriate bots
 
@@ -334,6 +335,19 @@ class BackupBotMaster(BackupBot):
 
             await self.console.send("Importing successful. Total messages imported: " + str(counter))
 
+    # on_message_edit event listener
+    async def on_message_edit(self, before, after):
+
+        # get message, match with cache, edit message
+        pass
+
+    # on_message_delete event listener
+    async def on_message_delete(self, message):
+
+        # get message, match with cache, delete if same author
+        pass
+
+    # on_user_update event listener
     async def on_user_update(self, before: discord.User, after: discord.User):
         """Listener for user avatar and username updates and activate profile syncing of the targeted bot"""
         avatar = None
@@ -350,6 +364,7 @@ class BackupBotMaster(BackupBot):
 
         await self.bots[user_id].sync_profile(avatar=avatar, username=username)
 
+    # on_member_update event listener
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         """Listener for member nickname updates and activate nickname syncing of the targeted bot"""
         nick = None
@@ -444,9 +459,10 @@ class BackupBotMaster(BackupBot):
         unknown_reactions = {}
         unknown_reactors = {}
 
+        REACTED_UNKNOWN = []  # to prevent un-needed reacting
         for r in reactions:
             BOT_REACTED = False
-            REACTED_UNKNOWN = []  # to prevent un-needed reacting
+            BOT_REACTED_UNKNOWN = False
 
             async for r_user in r.users():
                 bot = self.bots.get(r_user.id, self)
@@ -464,10 +480,14 @@ class BackupBotMaster(BackupBot):
                     await bot.add_reaction(message.channel.name, r.emoji)
 
                 except (discord.HTTPException, discord.NotFound):
-                    if bot.user.id in REACTED_UNKNOWN:
+                    if bot.user.id in REACTED_UNKNOWN and bot.user.id != self.user.id:
                         continue
-
                     REACTED_UNKNOWN.append(bot.user.id)
+
+                    if bot.user.id == self.user.id and not BOT_REACTED_UNKNOWN:
+                        BOT_REACTED_UNKNOWN = True
+                    else:
+                        continue
 
                     await bot.add_reaction(message.channel.name, self.unknown_emoji)
                     unknown_reactions.update(
