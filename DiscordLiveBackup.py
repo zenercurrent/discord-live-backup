@@ -71,6 +71,13 @@ class BackupBotSwarm:
         finally:
             self.loop.close()
 
+    def set_admin(self, user_id: int):
+        """Sets the admin of the backup swarm for mentioning in case of alarms or errors
+
+        :param user_id: valid user id of the admin user
+        """
+        self.master.admin = user_id
+
 
 class BackupBot(discord.Client):
 
@@ -104,8 +111,8 @@ class BackupBot(discord.Client):
         if stickers is None:  # no more sticker support?
             stickers = []
 
-        # TODO: bot master reactions?, reactions listener, role/colour change listener, pins?
-        #       default bot metadata, stats logging; live edit/delete w cache?
+        # TODO: reactions listener, role/colour change listener, pins?
+        #       stats logging; live edit/delete w cache?
         #       downtime offset calc
         channel = discord.utils.find(lambda m: m.name == channel_name, self.channels)
 
@@ -163,30 +170,38 @@ class BackupBot(discord.Client):
 
 class BackupBotMaster(BackupBot):
 
-    def __init__(self, token: str, target_guild: int, target_channels: list, backup_guild: int,
-                 console_channel=968231979701137428):
+    def __init__(self, token: str, target_guild: int, target_channels: list, backup_guild: int):
         super().__init__(-1, token, backup_guild)
 
         self.target_guild_id = target_guild
         self.target_channel_ids = target_channels
         self.target_guild = None
         self.target_channels = []
-        self.console_channel_id = console_channel
         self.console = None
+        self.database = None
+
+        # notable channels, name changeable
+        self.console_name = "terminal"
+        self.database_name = "cache"
 
         self.bots = {}  # index of backup bots (excluding master)
         self.targets = {}  # index of users that are targeted
         self.roles = {}  # index of roles in backup channel based on their names
 
+        self.CACHE_SIZE = 50  # sets the size of the link cache
+        self.link_cache = {}  # cache of message ids that links: target message -> backup message
+
         self.unknown_emoji = None
         self.time_offset = 0  # can change this based on desired timezone offset (UTC)
 
         self.__debug_pt = None  # for dev debug
+        self.admin = None  # set user to ping for alarms
 
     async def on_ready(self):
         await super().on_ready()
         self.target_guild = self.get_guild(self.target_guild_id)
-        self.console = self.guild.get_channel(self.console_channel_id)
+        self.console = self.__fetch_text_channel(self.console_name)
+        self.database = self.__fetch_text_channel(self.database_name)
         for i in self.target_channel_ids:
             channel = self.get_channel(i)
             self.target_channels.append(channel)
@@ -195,6 +210,10 @@ class BackupBotMaster(BackupBot):
             c = discord.utils.find(lambda m: m.name == channel.name, self.channels)
             if c is None:
                 await self.guild.create_text_channel(channel.name)
+
+        # get admin user (if set)
+        if self.admin is not None:
+            self.admin = self.get_user(self.admin)
 
         # generate index of target users
         for i in self.bots:
@@ -228,10 +247,10 @@ class BackupBotMaster(BackupBot):
             Also has a function to receive commands from a console channel. (if console_channel param is set)
             This is used to manually run certain actions with the bot swarm.
         """
-        if message.author == self.user or message.channel.id not in self.target_channel_ids + [self.console_channel_id]:
+        if message.author == self.user or message.channel.id not in self.target_channel_ids + [self.console.id]:
             return
 
-        if message.channel.id != self.console_channel_id:
+        if message.channel.id != self.console.id:
             await self.__send(message, realtime=True)
             return
 
@@ -514,8 +533,22 @@ class BackupBotMaster(BackupBot):
         await self.console.send(f"CommandException: {message}")
         raise self.CommandException(message)
 
+    async def __fetch_text_channel(self, channel_name: str):
+        """return text channel based on name in backup guild, if missing create channel"""
+        channel = discord.utils.find(lambda c: c.name == channel_name, self.guild.text_channels)
+        if channel is None:
+            channel = await self.guild.create_text_channel(channel_name)
+        return channel
+
     class CommandException(Exception):
         """Raise for incorrect command parameters or command failures"""
 
         def __init__(self, message: str):
             print(f"CommandException: {message}")
+
+    def __admin(self):
+        """get mention of admin user if not None"""
+        if self.admin is not None:
+            return self.admin.mention
+        else:
+            return ""
