@@ -188,8 +188,9 @@ class BackupBotMaster(BackupBot):
         self.targets = {}  # index of users that are targeted
         self.roles = {}  # index of roles in backup channel based on their names
 
-        self.CACHE_SIZE = 50  # sets the size of the link cache
-        self.link_cache = {}  # cache of message ids that links: target message -> backup message
+        self.CACHE_SIZE = 50        # sets the maximum size of the link cache
+        self.CACHE_SAVE_SIZE = 10   # sets the size of the saved link cache
+        self.link_cache = {}        # cache of message ids that links: target message -> backup message
 
         self.unknown_emoji = None
         self.time_offset = 0  # can change this based on desired timezone offset (UTC)
@@ -240,6 +241,53 @@ class BackupBotMaster(BackupBot):
                                                                         "custom emojis")
         self.unknown_emoji = unknown_emoji
 
+        await self.console.send("Master Backup Bot is ready")
+
+        # link cache - get dict of {target channel id: {target msg id: backup msg id}} for live edit/reaction update
+        await self.__link_cache_init()
+
+    # TODO: multi-channel support
+    async def __link_cache_init(self):
+        """Initialises the link cache by attempting sync up target and backup message ids"""
+        await self.console.send("Initialising link cache...")
+
+        # fetch cache from database channel into memory - link cache
+        _link_cache = await self.database.fetch_message(self.database.last_message_id)
+        if _link_cache is None:
+            # cache not found
+            await self.console.send("No saved cache JSON found! Generating new cache")
+            pass
+
+        # load saved cache JSON
+        try:
+            self.link_cache = json.loads(_link_cache)
+            await self.console.send("Save found! Syncing cache with previous save...")
+
+            # check if cache is valid
+            for ch in self.link_cache:
+                target_channel = self.target_guild.get_channel(int(ch))
+                backup_channel = discord.utils.find(lambda c: c.topic == str(ch), self.guild.text_channels)
+                latest_id = list(self.link_cache[ch].keys())[-1]
+
+                t_cache = [m async for m in target_channel.history(limit=len(self.link_cache[ch]) - 1,
+                                                                   before=await target_channel.fetch_message(int(latest_id)))]
+                b_cache = [m async for m in backup_channel.history(limit=len(self.link_cache[ch]) - 1,
+                                                                   before=await backup_channel.fetch_message(self.link_cache[ch][latest_id]))]
+                print(t_cache)
+                print(b_cache)
+
+                # for _t in self.link_cache[ch]:
+                #     t = await
+                #     b = self.link_cache[_t]
+                #     if not channel.
+
+        except json.JSONDecodeError:
+            # invalid json
+            await self.console.send("Invalid saved cache JSON! Generating new cache")
+            self.link_cache = {}
+
+
+
     # on_message event listener
     async def on_message(self, message):
         """Listener for messages from target channels and routes them to appropriate bots
@@ -254,6 +302,9 @@ class BackupBotMaster(BackupBot):
             await self.__send(message, realtime=True)
             return
 
+        await self.listen_console(message)
+
+    async def listen_console(self, message):
         """Console - execute commands to the bot swarm manually"""
 
         if message.content == "sync profiles":
