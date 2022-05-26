@@ -130,6 +130,15 @@ class BackupBot(discord.Client):
                                  )
         return msg
 
+    async def edit_message(self, message: discord.Message, content: str):
+        """
+        Edits the targeted message with new content
+
+        :param message: Message object to be edited (from the backup guild)
+        :param content: content of the new edited message
+        """
+        await message.edit(content=content)
+
     async def add_reaction(self, channel_name: str, emoji: discord.Emoji, message_id=None):
         """Adds a reaction to the Discord message under the bot user
 
@@ -188,9 +197,10 @@ class BackupBotMaster(BackupBot):
         self.targets = {}  # index of users that are targeted
         self.roles = {}  # index of roles in backup channel based on their names
 
-        self.CACHE_SIZE = 50        # sets the maximum size of the link cache
-        self.CACHE_SAVE_SIZE = 10   # sets the size of the saved link cache
-        self.link_cache = {}        # cache of message ids that links: target message -> backup message
+        self.CACHE_SIZE = 50  # sets the maximum size of the link cache
+        self.CACHE_SAVE_SIZE = 10  # sets the size of the saved link cache
+        self.link_cache = {}  # cache of message ids that links: target message -> backup message
+        self.__SYNCED = False   # flag that indicates if cache is synced
 
         self.unknown_emoji = None
         self.time_offset = 0  # can change this based on desired timezone offset (UTC)
@@ -201,8 +211,8 @@ class BackupBotMaster(BackupBot):
     async def on_ready(self):
         await super().on_ready()
         self.target_guild = self.get_guild(self.target_guild_id)
-        self.console = self.__fetch_text_channel(self.console_name)
-        self.database = self.__fetch_text_channel(self.database_name)
+        self.console = await self.__fetch_text_channel(self.console_name)
+        self.database = await self.__fetch_text_channel(self.database_name)
         for i in self.target_channel_ids:
             channel = self.get_channel(i)
             self.target_channels.append(channel)
@@ -253,6 +263,7 @@ class BackupBotMaster(BackupBot):
 
         # fetch cache from database channel into memory - link cache
         _link_cache = await self.database.fetch_message(self.database.last_message_id)
+        _link_cache = _link_cache.content
         if _link_cache is None:
             # cache not found
             await self.console.send("No saved cache JSON found! Generating new cache")
@@ -267,14 +278,38 @@ class BackupBotMaster(BackupBot):
             for ch in self.link_cache:
                 target_channel = self.target_guild.get_channel(int(ch))
                 backup_channel = discord.utils.find(lambda c: c.topic == str(ch), self.guild.text_channels)
+
                 latest_id = list(self.link_cache[ch].keys())[-1]
+                try:
+                    t_root = await target_channel.fetch_message(int(latest_id))
+                except discord.NotFound:
+                    await self.console.send(f"Root message with id *{str(latest_id)}* not found! Cannot sync cache "
+                                            f"properly, please run a manual sync.")
+                    break
+
+                try:
+                    b_root = await backup_channel.fetch_message(self.link_cache[ch][latest_id])
+                except discord.NotFound:
+                    await self.console.send(f"Root message in backup channel with id *{str(self.link_cache[ch][latest_id])}* not found!"
+                                            f" Cannot sync cache properly, please run a manual sync.")
+                    break
 
                 t_cache = [m async for m in target_channel.history(limit=len(self.link_cache[ch]) - 1,
-                                                                   before=await target_channel.fetch_message(int(latest_id)))]
+                                                                   before=t_root)] + [t_root]
                 b_cache = [m async for m in backup_channel.history(limit=len(self.link_cache[ch]) - 1,
-                                                                   before=await backup_channel.fetch_message(self.link_cache[ch][latest_id]))]
-                print(t_cache)
-                print(b_cache)
+                                                                   before=b_root)] + [b_root]
+
+                for i in range(len(t_cache)):
+                    # simple content checking
+                    __MANUAL_RE = "^(\*\[\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}(A|P)M\]\*\n)"  # manual import header regex
+                    __t = t_cache[i].content
+                    __b = b_cache[i].content
+                    if m := __b.search(__MANUAL_RE, __b):
+                        __b = str(__b).replace(m.string, "", 1)
+
+                    if __t != __b:
+                        await b_cache[i]
+                        break
 
                 # for _t in self.link_cache[ch]:
                 #     t = await
@@ -286,7 +321,9 @@ class BackupBotMaster(BackupBot):
             await self.console.send("Invalid saved cache JSON! Generating new cache")
             self.link_cache = {}
 
-
+        # disable live edit/reaction if cache is not synced
+        if not self.__SYNCED:
+            await self.console.send("Warning! Cache may be de-synced and changes during downtime may not be updated.")
 
     # on_message event listener
     async def on_message(self, message):
@@ -480,32 +517,11 @@ class BackupBotMaster(BackupBot):
         - changes user mentions to the corresponding bot user mention
         - clones the reactions with correct routing
 
-        :param message: Message object for bot to send
+        :param message: Message object for bot to send (from target guild)
         :param realtime: flag to set True if message is from on_message
         """
         content = message.content
-
-        # convert user mentions to bot user mention
-        matches = re.findall("<@\d+>", content)
-        for m in matches:
-            user_id = int(m[2:-1])
-            bot = self.bots.get(user_id, None)
-            if bot is not None:
-                content = content.replace(m, bot.user.mention, 1)
-
-        # convert role mentions to backup guild role mention
-        matches = re.findall("<@&\d+>", content)
-        for m in matches:
-            role_id = int(m[3:-1])
-            target_role = self.target_guild.get_role(role_id)
-            role = self.roles.get(target_role.name, None)
-            if role is not None:
-                content = content.replace(m, role.mention, 1)
-
-        # neuter @here and @everyone tags (to prevent spam)
-        content = content.replace("@here", "@/here").replace("@everyone", "@/everyone")
-
-        content = "\n" + content
+        content = self._clean(content)
 
         # add message metadata if imported
         if not realtime:
@@ -575,6 +591,55 @@ class BackupBotMaster(BackupBot):
 
         if r_metadata != "":
             await backup_message.edit(content=backup_message.content + r_metadata)
+
+    async def __edit(self, message: discord.Message, content: str):
+        """Routes message to appropriate bot with new content to edit
+
+            Message id from target guild is matched with cache to get backup guild message,
+            if message id not in the cache, the edit will not be performed.
+
+            :param message: Message object for bot to edit (from target guild)
+            :param content: content of new message
+        """
+        content = self._clean(content)
+        bot = self.bots.get(message.author.id, self)
+
+        g_cache = self.link_cache.get(message.guild.id, None)
+        if g_cache is None:
+            return
+        b_msg_id = g_cache.get(message.id, None)
+        if b_msg_id is None:
+            return
+
+        backup_channel = discord.utils.find(lambda c: c.topic == str(message.guild.id), self.guild.text_channels)
+        backup_message = await backup_channel.fetch_message(b_msg_id)
+
+        await bot.edit_message(backup_message, content)
+
+    def _clean(self, content: str):
+        """clean message content to remove spam and swap tags"""
+        # convert user mentions to bot user mention
+        matches = re.findall("<@\d+>", content)
+        for m in matches:
+            user_id = int(m[2:-1])
+            bot = self.bots.get(user_id, None)
+            if bot is not None:
+                content = content.replace(m, bot.user.mention, 1)
+
+        # convert role mentions to backup guild role mention
+        matches = re.findall("<@&\d+>", content)
+        for m in matches:
+            role_id = int(m[3:-1])
+            target_role = self.target_guild.get_role(role_id)
+            role = self.roles.get(target_role.name, None)
+            if role is not None:
+                content = content.replace(m, role.mention, 1)
+
+        # neuter @here and @everyone tags (to prevent spam)
+        content = content.replace("@here", "@/here").replace("@everyone", "@/everyone")
+
+        content = "\n" + content
+        return content
 
     async def _raise(self, message: str):
         """
