@@ -10,13 +10,15 @@ Manual backup (with timestamp)
 Realtime backup
 """
 
+from DiscordLiveBackup.ChannelStatsLogger import ChannelStatsLogger
+
 import asyncio
+from datetime import date, timedelta
+
 import discord
 import json
 import os
 import re
-
-from datetime import timedelta
 
 
 class BackupBotSwarm:
@@ -186,6 +188,8 @@ class BackupBotMaster(BackupBot):
         self.target_channel_ids = target_channels
         self.target_guild = None
         self.target_channels = []
+        self.backup_channels = []
+        self.backup_channel_ids = []
         self.console = None
         self.database = None
 
@@ -200,7 +204,7 @@ class BackupBotMaster(BackupBot):
         self.CACHE_SIZE = 50  # sets the maximum size of the link cache
         self.CACHE_SAVE_SIZE = 10  # sets the size of the saved link cache
         self.link_cache = {}  # cache of message ids that links: target message -> backup message
-        self.__SYNCED = False   # flag that indicates if cache is synced
+        self.__SYNCED = False  # flag that indicates if cache is synced
 
         self.unknown_emoji = None
         self.time_offset = 0  # can change this based on desired timezone offset (UTC)
@@ -220,11 +224,16 @@ class BackupBotMaster(BackupBot):
             # create channels if doesn't exist
             c = discord.utils.find(lambda m: m.name == channel.name, self.channels)
             if c is None:
-                await self.guild.create_text_channel(channel.name)
+                c = await self.guild.create_text_channel(channel.name)
+            self.backup_channels.append(c)
+            self.backup_channel_ids.append(c.id)
 
         # get admin user (if set)
         if self.admin is not None:
             self.admin = self.get_user(self.admin)
+
+        # TODO: temp
+        await ChannelStatsLogger(master=self).test_thread()
 
         # generate index of target users
         for i in self.bots:
@@ -253,77 +262,134 @@ class BackupBotMaster(BackupBot):
 
         await self.console.send("Master Backup Bot is ready")
 
-        # link cache - get dict of {target channel id: {target msg id: backup msg id}} for live edit/reaction update
-        await self.__link_cache_init()
+        # # link cache - get dict of {target channel id: {target msg id: backup msg id}} for live edit/reaction update
+        # await self.__link_cache_init()
 
-    # TODO: multi-channel support
-    async def __link_cache_init(self):
-        """Initialises the link cache by attempting sync up target and backup message ids"""
-        await self.console.send("Initialising link cache...")
-
-        # fetch cache from database channel into memory - link cache
-        _link_cache = await self.database.fetch_message(self.database.last_message_id)
-        _link_cache = _link_cache.content
-        if _link_cache is None:
-            # cache not found
-            await self.console.send("No saved cache JSON found! Generating new cache")
-            pass
-
-        # load saved cache JSON
-        try:
-            self.link_cache = json.loads(_link_cache)
-            await self.console.send("Save found! Syncing cache with previous save...")
-
-            # check if cache is valid
-            for ch in self.link_cache:
-                target_channel = self.target_guild.get_channel(int(ch))
-                backup_channel = discord.utils.find(lambda c: c.topic == str(ch), self.guild.text_channels)
-
-                latest_id = list(self.link_cache[ch].keys())[-1]
-                try:
-                    t_root = await target_channel.fetch_message(int(latest_id))
-                except discord.NotFound:
-                    await self.console.send(f"Root message with id *{str(latest_id)}* not found! Cannot sync cache "
-                                            f"properly, please run a manual sync.")
-                    break
-
-                try:
-                    b_root = await backup_channel.fetch_message(self.link_cache[ch][latest_id])
-                except discord.NotFound:
-                    await self.console.send(f"Root message in backup channel with id *{str(self.link_cache[ch][latest_id])}* not found!"
-                                            f" Cannot sync cache properly, please run a manual sync.")
-                    break
-
-                t_cache = [m async for m in target_channel.history(limit=len(self.link_cache[ch]) - 1,
-                                                                   before=t_root)] + [t_root]
-                b_cache = [m async for m in backup_channel.history(limit=len(self.link_cache[ch]) - 1,
-                                                                   before=b_root)] + [b_root]
-
-                for i in range(len(t_cache)):
-                    # simple content checking
-                    __MANUAL_RE = "^(\*\[\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}(A|P)M\]\*\n)"  # manual import header regex
-                    __t = t_cache[i].content
-                    __b = b_cache[i].content
-                    if m := __b.search(__MANUAL_RE, __b):
-                        __b = str(__b).replace(m.string, "", 1)
-
-                    if __t != __b:
-                        await b_cache[i]
-                        break
-
-                # for _t in self.link_cache[ch]:
-                #     t = await
-                #     b = self.link_cache[_t]
-                #     if not channel.
-
-        except json.JSONDecodeError:
-            # invalid json
-            await self.console.send("Invalid saved cache JSON! Generating new cache")
-            self.link_cache = {}
-
-        # disable live edit/reaction if cache is not synced
-        if not self.__SYNCED:
-            await self.console.send("Warning! Cache may be de-synced and changes during downtime may not be updated.")
+    # # TODO: multi-channel support
+    # async def __link_cache_init(self):
+    #     """Initialises the link cache by attempting sync up target and backup message ids"""
+    #     await self.console.send("Initialising link cache...")
+    #
+    #     # fetch cache from database channel into memory - link cache
+    #     _link_cache = await self.database.fetch_message(self.database.last_message_id)
+    #     _link_cache = _link_cache.content
+    #     if _link_cache is None:
+    #         # cache not found
+    #         await self.console.send("No saved cache JSON found! Generating new cache")
+    #         pass
+    #
+    #     # load saved cache JSON
+    #     try:
+    #         self.link_cache = json.loads(_link_cache)
+    #         await self.console.send("Save found! Syncing cache with previous save...")
+    #
+    #         # check if cache is valid
+    #         for ch in self.link_cache:
+    #             target_channel = self.target_guild.get_channel(int(ch))
+    #             backup_channel = discord.utils.find(lambda c: c.topic == str(ch), self.guild.text_channels)
+    #
+    #             edited_list = []
+    #             deleted_list = []
+    #
+    #             latest_id = list(self.link_cache[ch].keys())[-1]
+    #             try:
+    #                 t_root = await target_channel.fetch_message(int(latest_id))
+    #             except discord.NotFound:
+    #                 await self.console.send(f"Root message with id *{str(latest_id)}* not found! Cannot sync cache "
+    #                                         f"properly, please run a manual sync.")
+    #                 break
+    #
+    #             try:
+    #                 b_root = await backup_channel.fetch_message(self.link_cache[ch][latest_id])
+    #             except discord.NotFound:
+    #                 await self.console.send(
+    #                     f"Root message in backup channel with id *{str(self.link_cache[ch][latest_id])}* not found!"
+    #                     f" Cannot sync cache properly, please run a manual sync.")
+    #                 break
+    #
+    #             t_cache = {str(m.id): m for m in
+    #                        ([m async for m in target_channel.history(limit=len(self.link_cache[ch]) - 1,
+    #                                                                  before=t_root)] + [t_root])}
+    #             b_cache = {m.id: m for m in
+    #                        ([m async for m in backup_channel.history(limit=len(self.link_cache[ch]) - 1,
+    #                                                                  before=b_root)] + [b_root])}
+    #
+    #             print(t_cache)
+    #             print(b_cache)
+    #             print(self.link_cache[ch])
+    #
+    #             for i in self.link_cache[ch]:
+    #                 _i = self.link_cache[ch][i]
+    #
+    #                 __t = t_cache.get(i, None)
+    #                 if __t is None:
+    #                     # target message deleted
+    #                     m = b_cache.get(_i, None)
+    #                     if m is not None:
+    #                         deleted_list.append(m)
+    #                     continue
+    #                 __t = __t.content
+    #
+    #                 __b = b_cache.get(_i, None)
+    #                 if __b is None:
+    #                     # unexpected! backup message deleted
+    #                     await self.console.send(f"Message id *{_i}* in backup channel expected but not found!\n"
+    #                                             f"Content: {__t}")
+    #                     self.__SYNCED = False
+    #                     break
+    #                 __b = __b.content
+    #
+    #                 # simple content checking
+    #                 __MANUAL_RE = "^(\*\[\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}(A|P)M\]\*\n)"  # manual import header regex
+    #
+    #                 if m := re.search(__MANUAL_RE, __b):
+    #                     __b = str(__b).replace(m.string, "", 1)
+    #
+    #                 if __t != __b:
+    #                     # message edited
+    #                     edited_list.append({"message": t_cache[i], "content": __t})
+    #                     # await self.__edit(t_cache[i], i)
+    #                     continue
+    #
+    #             # generate changes report
+    #             if len(edited_list) + len(deleted_list) != 0:
+    #                 report = open("recent_changes.txt", "w+")
+    #                 lines = ["Discord Live Backup - Recent Changes Report",
+    #                          (date.today() + timedelta(hours=self.time_offset)).strftime("as of %d %b %Y"),
+    #                          "=" * 43,
+    #                          "",
+    #                          "Channel - #" + target_channel.name,
+    #                          ""]
+    #
+    #                 if len(edited_list) > 0:
+    #                     lines += ["Edited: ", ""]
+    #                 for e in edited_list:
+    #                     lines.append(f"[{e['message'].edited_at}] @{e['message'].author}: {e['content']} > {e['message'].content}]")
+    #                 if len(edited_list) > 0:
+    #                     lines.append("")
+    #
+    #                 if len(deleted_list) > 0:
+    #                     lines += ["Deleted: ", ""]
+    #                 for d in deleted_list:
+    #                     lines.append(f"[{d.created_at}] @{d.author}: {d.content}")
+    #
+    #                 lines += ["", "End of Report"]
+    #                 report.writelines(lines)
+    #                 report.close()
+    #
+    #             # TODO: send report into channnel and ask user if continue, if yes, make changes. if no, suggest manual import.
+    #             #       after this, do a round of testing of cache. last part, do a "daily backup" of cache.
+    #             #       final implementation, logging & stats.
+    #
+    #     except json.JSONDecodeError:
+    #         # invalid json
+    #         await self.console.send("Invalid saved cache JSON! Generating new cache")
+    #         self.link_cache = {}
+    #
+    #     # disable live edit/reaction if cache is not synced
+    #     if not self.__SYNCED:
+    #         await self.console.send("Warning! Cache may be de-synced and changes during downtime will probably not be "
+    #                                 "updated.")
 
     # on_message event listener
     async def on_message(self, message):
@@ -445,13 +511,14 @@ class BackupBotMaster(BackupBot):
     # on_message_edit event listener
     async def on_message_edit(self, before, after):
 
-        # get message, match with cache, edit message
-        pass
+        new_content = after.content
+        await self.__edit(before, new_content)
 
     # on_message_delete event listener
     async def on_message_delete(self, message):
-
-        # get message, match with cache, delete if same author
+        # # get user who deleted
+        # async for entry in
+        # # get message, match with cache, delete if same author
         pass
 
     # on_user_update event listener
@@ -539,6 +606,12 @@ class BackupBotMaster(BackupBot):
                                                 embeds=message.embeds,
                                                 files=message.attachments,
                                                 stickers=message.stickers)
+
+        # update link cache
+        c = self.link_cache[message.id]
+        if len(self.link_cache) >= self.CACHE_SIZE:
+            c.pop(list(c.keys())[0])
+        self.link_cache[message.id].update({str(message.id): backup_message.id})
 
         # import and clone reactions
         reactions = message.reactions
