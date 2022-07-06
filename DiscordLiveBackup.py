@@ -121,9 +121,12 @@ class BackupBot(discord.Client):
         # convert attachments -> files
         files = [await attach.to_file() for attach in files]
 
-        # prevent overwriting link embeds
-        if "http://" in message or "https://" in message:
-            embeds = []
+        # # prevent overwriting link embeds
+        # if "http://" in message or "https://" in message:
+        #     embeds.pop()
+
+        # colour for embeds!
+        embeds[0].colour = self.guild.me.roles[-1].colour
 
         msg = await channel.send(content=message,
                                  embed=embeds[0] if len(embeds) > 0 else None,
@@ -589,29 +592,54 @@ class BackupBotMaster(BackupBot):
         """
         content = message.content
         content = self._clean(content)
+        if content == "":
+            content = "\u200b"
 
-        # add message metadata if imported
+        # message metadata in embed if imported
+        imported_embed = None
+        url = ""
         if not realtime:
-            dt = "*[" + (message.created_at + timedelta(hours=self.time_offset)).strftime("%m/%d/%Y %I:%M%p") + "]*\n"
-            content = dt + content
+            dt = message.created_at
+            imported_embed = discord.Embed(description=content + "\n", timestamp=dt)
+
+            # if video-ish embed
+            if "http://" in content or "https://" in content:
+                if len(message.embeds) > 0:
+                    imported_embed = message.embeds[0].copy()
+                # url = list(filter(lambda _c: str(_c).startswith(("http://", "https://")), content.split()))[0]
+                # imported_embed.url = url
+
+            # if embed only
+            if content == "\u200b" and len(message.embeds) > 0:
+                imported_embed = message.embeds[0].copy()
+
+            imported_embed.timestamp = dt
 
         bot = self.bots.get(message.author.id, self)
 
         # add original author metadata if default backup bot
         if bot.user.id == self.user.id:
-            content = content + f"*[Message Author: @/{message.author.name}#{message.author.discriminator}]*\n"
+            imported_embed.set_footer(text=f"Message Author: @{message.author.name}#{message.author.discriminator}")
 
-        backup_message = await bot.send_message(channel_name=message.channel.name,
-                                                message=content,
-                                                embeds=message.embeds,
-                                                files=message.attachments,
-                                                stickers=message.stickers)
+        if realtime:
+            backup_message = await bot.send_message(channel_name=message.channel.name,
+                                                    message=content,
+                                                    embeds=message.embeds,
+                                                    files=message.attachments,
+                                                    stickers=message.stickers)
+        else:
+            backup_message = await bot.send_message(channel_name=message.channel.name,
+                                                    message=content if url != "" else "",
+                                                    embeds=[imported_embed] + message.embeds,
+                                                    files=message.attachments,
+                                                    stickers=message.stickers)
 
         # update link cache
-        c = self.link_cache[message.id]
-        if len(self.link_cache) >= self.CACHE_SIZE:
-            c.pop(list(c.keys())[0])
-        self.link_cache[message.id].update({str(message.id): backup_message.id})
+        c = self.link_cache.get(message.id)
+        if c is not None:
+            if len(self.link_cache) >= self.CACHE_SIZE:
+                c.pop(list(c.keys())[0])
+            self.link_cache[message.id].update({str(message.id): backup_message.id})
 
         # import and clone reactions
         reactions = message.reactions
@@ -711,7 +739,6 @@ class BackupBotMaster(BackupBot):
         # neuter @here and @everyone tags (to prevent spam)
         content = content.replace("@here", "@/here").replace("@everyone", "@/everyone")
 
-        content = "\n" + content
         return content
 
     async def _raise(self, message: str):
