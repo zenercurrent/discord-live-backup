@@ -1,5 +1,6 @@
 import discord
 import requests
+import asyncio
 
 STAT_TITLES = {
     "Total Messages Sent": lambda m: 1,
@@ -82,21 +83,11 @@ class ChannelStatsLogger:
 
     def __init__(self, master):
         self.threads = {}
+        self.cache = {}
         self.master = master
-        pass
 
-    async def test_thread(self):
-        self.threads = await fetch_all_stats_threads(self.master.guild, self.master.backup_channel_ids)
-
-        # create stat thread if doesn't exist
-        for b in self.master.backup_channels:
-            for s in STAT_TITLES:
-                if self.threads[b.id].get(s) is None:
-                    print("creating")
-                    t = await create_thread(b, s + " - 0")
-                    self.threads[b.id].update({s: t["id"]})
-
-            await self.update(b.id, "Total Messages Sent", 1930)
+        loop = asyncio.get_running_loop()
+        loop.create_task(self.setup())
 
     async def update(self, channel_id: int, topic: str, value: int, incre=True):
         """Updates the stat thread by renaming the appropriate thread based on channel and topic.
@@ -119,8 +110,27 @@ class ChannelStatsLogger:
 
         await rename_thread(self.master.guild, _id, f"{topic} - {str(value)}")
 
-    def setup(self):
-        pass
+    def check(self, message: discord.Message):
+        """Loops through the set STAT_TITLES functions and increments stat counters based on conditions"""
+        for st in STAT_TITLES:
+            func = STAT_TITLES[st]
+            incre = func(message)
+            if incre is not None:
+                self.cache[st] += incre
+                print(f"[DEBUG] Updated <{st}> by {incre}")
+
+    async def setup(self):
+        """Run setup before using ChannelStatsLogger"""
+        self.threads = await fetch_all_stats_threads(self.master.guild, self.master.backup_channel_ids)
+        self.cache = dict.fromkeys(STAT_TITLES.keys(), 0)
+
+        # create stat thread if doesn't exist
+        for b in self.master.backup_channels:
+            for s in STAT_TITLES:
+                if self.threads[b.id].get(s) is None:
+                    print(f"Stat Thread ({b.name}:{s}) not found. Creating stat thread...")
+                    t = await create_thread(b, s + " - 0")
+                    self.threads[b.id].update({s: t["id"]})
 
     def log(self):
         pass

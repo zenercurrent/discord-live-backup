@@ -126,7 +126,8 @@ class BackupBot(discord.Client):
         #     embeds.pop()
 
         # colour for embeds!
-        embeds[0].colour = self.guild.me.roles[-1].colour
+        if len(embeds) > 0:
+            embeds[0].colour = self.guild.me.roles[-1].colour
 
         msg = await channel.send(content=message,
                                  embed=embeds[0] if len(embeds) > 0 else None,
@@ -213,7 +214,9 @@ class BackupBotMaster(BackupBot):
         self.time_offset = 0  # can change this based on desired timezone offset (UTC)
 
         self.__debug_pt = None  # for dev debug
-        self.admin = None  # set user to ping for alarms
+        self.admin = None  # set user to ping for alarm
+
+        self.ChannelStatsLogger = None
 
     async def on_ready(self):
         await super().on_ready()
@@ -231,12 +234,12 @@ class BackupBotMaster(BackupBot):
             self.backup_channels.append(c)
             self.backup_channel_ids.append(c.id)
 
+        # stats logger
+        self.ChannelStatsLogger = ChannelStatsLogger(master=self)
+
         # get admin user (if set)
         if self.admin is not None:
             self.admin = self.get_user(self.admin)
-
-        # TODO: temp
-        await ChannelStatsLogger(master=self).test_thread()
 
         # generate index of target users
         for i in self.bots:
@@ -621,6 +624,9 @@ class BackupBotMaster(BackupBot):
         if bot.user.id == self.user.id:
             imported_embed.set_footer(text=f"Message Author: @{message.author.name}#{message.author.discriminator}")
 
+        # update stats
+        self.ChannelStatsLogger.check(message)
+
         if realtime:
             backup_message = await bot.send_message(channel_name=message.channel.name,
                                                     message=content,
@@ -634,12 +640,13 @@ class BackupBotMaster(BackupBot):
                                                     files=message.attachments,
                                                     stickers=message.stickers)
 
-        # update link cache
-        c = self.link_cache.get(message.id)
-        if c is not None:
-            if len(self.link_cache) >= self.CACHE_SIZE:
-                c.pop(list(c.keys())[0])
-            self.link_cache[message.id].update({str(message.id): backup_message.id})
+        # TODO: link cache temp to be fixed
+        # # update link cache
+        # c = self.link_cache.get(message.id)
+        # if c is not None:
+        #     if len(self.link_cache) >= self.CACHE_SIZE:
+        #         c.pop(list(c.keys())[0])
+        #     self.link_cache[message.id].update({str(message.id): backup_message.id})
 
         # import and clone reactions
         reactions = message.reactions
