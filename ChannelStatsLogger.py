@@ -2,6 +2,9 @@ import discord
 import requests
 import asyncio
 
+from datetime import time
+import schedule
+
 STAT_TITLES = {
     "Total Messages Sent": lambda m: 1,
     "Total Attachments Sent": lambda m: len(m.attachments) if len(m.attachments) > 0 else None
@@ -81,24 +84,24 @@ class ChannelStatsLogger:
     Stats are updated in set intervals to prevent getting rate-limited.
     """
 
-    def __init__(self, master):
+    def __init__(self, master, channel_id: int):
         self.threads = {}
         self.cache = {}
         self.master = master
+        self.channel_id = channel_id
 
-        loop = asyncio.get_running_loop()
-        loop.create_task(self.setup())
+        self.loop = asyncio.get_running_loop()
+        self.loop.create_task(self.setup())
 
-    async def update(self, channel_id: int, topic: str, value: int, incre=True):
+    async def update(self, topic: str, value: int, incre=True):
         """Updates the stat thread by renaming the appropriate thread based on channel and topic.
 
-        :param channel_id: id of the affected channel
         :param topic: topic to increment
         :param value: value to be updated to
 
         :param incre: flag to set for value to be incremented from previous value, if not replaces with new value
         """
-        threads = self.threads.get(channel_id)
+        threads = self.threads.get(self.channel_id)
         assert threads is not None
         _id = threads.get(topic)
         assert _id is not None
@@ -117,9 +120,8 @@ class ChannelStatsLogger:
             incre = func(message)
             if incre is not None:
                 self.cache[st] += incre
-                print(f"[DEBUG] Updated <{st}> by {incre}")
 
-    async def setup(self):
+    async def setup(self, t=time(15, 0)):
         """Run setup before using ChannelStatsLogger"""
         self.threads = await fetch_all_stats_threads(self.master.guild, self.master.backup_channel_ids)
         self.cache = dict.fromkeys(STAT_TITLES.keys(), 0)
@@ -132,17 +134,13 @@ class ChannelStatsLogger:
                     t = await create_thread(b, s + " - 0")
                     self.threads[b.id].update({s: t["id"]})
 
-    def log(self):
-        pass
+        # set up logging schedule
+        schedule.every().day.at(t.strftime("%H:%M")).do(lambda _: asyncio.run_coroutine_threadsafe(self.log(), self.loop))
 
+    async def log(self):
+        for st in self.cache:
+            stat = self.cache[st]
+            await self.update(st, stat)
+        print("[DEBUG] Log completed, check the threads")
 
-class LoggedChannel:
-    """Indicates a channel that is logged by the ChannelStatsLogger.
-    Makes it more convenient to manage the routing of different channel by the logger.
-    """
-
-    def __init__(self, channel: discord.TextChannel):
-        self.channel = channel
-
-        threads = self.channel.threads
-        self.threads = {}  # stores the threads of the logger
+        self.cache = dict.fromkeys(STAT_TITLES.keys(), 0)

@@ -234,8 +234,8 @@ class BackupBotMaster(BackupBot):
             self.backup_channels.append(c)
             self.backup_channel_ids.append(c.id)
 
-        # stats logger
-        self.ChannelStatsLogger = ChannelStatsLogger(master=self)
+        # stats logger TODO: testing for one channel for now
+        self.ChannelStatsLogger = ChannelStatsLogger(master=self, channel_id=self.target_channel_ids[0])
 
         # get admin user (if set)
         if self.admin is not None:
