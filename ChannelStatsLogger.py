@@ -110,6 +110,7 @@ class ChannelStatsLogger:
         if incre:
             prev = int((await fetch_thread(self.master.guild, _id))["name"].replace(f"{topic} - ", "", 1))
             value += prev
+            print(f"[Thread Update!] {topic} -> +{prev}")
 
         await rename_thread(self.master.guild, _id, f"{topic} - {str(value)}")
 
@@ -135,7 +136,9 @@ class ChannelStatsLogger:
                     self.threads[b.id].update({s: t["id"]})
 
         # set up logging schedule
-        schedule.every().day.at(t.strftime("%H:%M")).do(lambda _: asyncio.run_coroutine_threadsafe(self.log(), self.loop))
+        schedule.every().day.at(t.strftime("%H:%M")).do(
+            lambda _: self.loop.create_task(self.log()))
+        print("[DEBUG] SCHEDULE SET!")
 
     async def log(self):
         for st in self.cache:
