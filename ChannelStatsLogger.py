@@ -122,7 +122,7 @@ class ChannelStatsLogger:
             if incre is not None:
                 self.cache[st] += incre
 
-    async def setup(self, t=time(15, 0)):
+    async def setup(self, sch_time=time(15, 0)):
         """Run setup before using ChannelStatsLogger"""
         self.threads = await fetch_all_stats_threads(self.master.guild, self.master.backup_channel_ids)
         self.cache = dict.fromkeys(STAT_TITLES.keys(), 0)
@@ -136,7 +136,7 @@ class ChannelStatsLogger:
                     self.threads[b.id].update({s: t["id"]})
 
         # set up logging schedule
-        schedule.every().day.at(t.strftime("%H:%M")).do(
+        schedule.every().day.at(sch_time.strftime("%H:%M")).do(
             lambda _: self.loop.create_task(self.log()))
         print("[DEBUG] SCHEDULE SET!")
 
