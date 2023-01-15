@@ -235,7 +235,7 @@ class BackupBotMaster(BackupBot):
             self.backup_channel_ids.append(c.id)
 
         # stats logger TODO: testing for one channel for now
-        self.ChannelStatsLogger = ChannelStatsLogger(master=self, channel_id=self.target_channel_ids[0])
+        # self.ChannelStatsLogger = ChannelStatsLogger(master=self, channel_id=self.target_channel_ids[0])
 
         # get admin user (if set)
         if self.admin is not None:
@@ -404,18 +404,18 @@ class BackupBotMaster(BackupBot):
             Also has a function to receive commands from a console channel. (if console_channel param is set)
             This is used to manually run certain actions with the bot swarm.
         """
-        if message.author == self.user or message.channel.id not in self.target_channel_ids + [self.console.id]:
+        if message.author == self.user or message.channel.id not in (self.target_channel_ids + [self.console.id]):
             return
 
         if message.channel.id != self.console.id:
             await self.__send(message, realtime=True)
             return
-
+        
         await self.listen_console(message)
 
     async def listen_console(self, message):
         """Console - execute commands to the bot swarm manually"""
-
+        
         if message.content == "sync profiles":
             # Sync Profiles - manually sync up the username, avatar and nickname of target to the bot
 
@@ -507,11 +507,28 @@ class BackupBotMaster(BackupBot):
             # start import
             await self.console.send("Starting importing procedure...")
             counter = 0
+            
+            # send timeframe info of each day of import
+            start_ts = (starting_point.created_at + timedelta(hours=self.time_offset)).strftime("%d %b %Y, %H:%M")
+            await self.send_message(channel_name=starting_point.channel.name,
+                                                    embeds=[discord.Embed(title="Mass Import Start",
+                                                    description=f"Starts at: {start_ts}")])
+            await self.send_message(channel_name=starting_point.channel.name, message=".")
+                                                    
+            latest_date = ""
             async for import_message in starting_point.channel.history(limit=None, oldest_first=True,
                                                                        after=starting_point):
+                import_ts = import_message.created_at + timedelta(hours=self.time_offset)
+                if latest_date != import_ts.strftime('%d %b %Y'):
+                    latest_date = import_ts.strftime('%d %b %Y')
+                    await self.send_message(channel_name=starting_point.channel.name, embeds=[discord.Embed(title=f"Mass Import {latest_date}")])
+                
                 await self.__send(import_message)
                 counter += 1
 
+            await self.send_message(channel_name=starting_point.channel.name,
+                                                    embeds=[discord.Embed(title="Mass Import End",
+                                                    description=f"Ends at: {import_ts.strftime('%d %b %Y, %H:%M')}")])
             await self.console.send("Importing successful. Total messages imported: " + str(counter))
 
     # on_message_edit event listener
@@ -598,47 +615,25 @@ class BackupBotMaster(BackupBot):
         if content == "":
             content = "\u200b"
 
-        # message metadata in embed if imported
-        imported_embed = None
-        url = ""
-        if not realtime:
-            dt = message.created_at
-            imported_embed = discord.Embed(description=content + "\n", timestamp=dt)
-
-            # if video-ish embed
-            if "http://" in content or "https://" in content:
-                if len(message.embeds) > 0:
-                    imported_embed = message.embeds[0].copy()
-                # url = list(filter(lambda _c: str(_c).startswith(("http://", "https://")), content.split()))[0]
-                # imported_embed.url = url
-
-            # if embed only
-            if content == "\u200b" and len(message.embeds) > 0:
-                imported_embed = message.embeds[0].copy()
-
-            imported_embed.timestamp = dt
-
         bot = self.bots.get(message.author.id, self)
 
-        # add original author metadata if default backup bot
-        if bot.user.id == self.user.id:
-            imported_embed.set_footer(text=f"Message Author: @{message.author.name}#{message.author.discriminator}")
-
         # update stats
-        self.ChannelStatsLogger.check(message)
-
-        if realtime:
-            backup_message = await bot.send_message(channel_name=message.channel.name,
+        # self.ChannelStatsLogger.check(message)    # TODO: tmp remove stats logger
+        
+        # allow embeds from links to generate themselves
+        embeds = message.embeds
+        if not realtime and ("http://" in content or "https://" in content):
+            embeds = []
+        
+        backup_message = await bot.send_message(channel_name=message.channel.name,
                                                     message=content,
-                                                    embeds=message.embeds,
+                                                    embeds=embeds,
                                                     files=message.attachments,
                                                     stickers=message.stickers)
-        else:
-            backup_message = await bot.send_message(channel_name=message.channel.name,
-                                                    message=content if url != "" else "",
-                                                    embeds=[imported_embed] + message.embeds,
-                                                    files=message.attachments,
-                                                    stickers=message.stickers)
+                                                    
+        # add original author metadata if default backup bot (as a reply)
+        if bot.user.id == self.user.id:
+            await backup_message.reply(content=f"Message Author: @{message.author.name}#{message.author.discriminator}")
 
         # TODO: link cache temp to be fixed
         # # update link cache
